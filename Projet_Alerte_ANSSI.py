@@ -14,21 +14,50 @@ url_ANSSI_alertes = "https://www.cert.ssi.gouv.fr/alerte/feed/"
 
 
 # extraction flux RSS des avis et alertes de l'ANSSI
+# URLs des flux RSS de l'ANSSI
+url_ANSSI_avis = "https://www.cert.ssi.gouv.fr/avis/feed/"
+url_ANSSI_alertes = "https://www.cert.ssi.gouv.fr/alerte/feed/"
+
+# Extraction flux RSS des avis et alertes de l'ANSSI
 def flux_RSS(url):
     rss_feed = feedparser.parse(url)
-    dico={}
-    id_pattern = r"CERTFR-\d{4}-[A-Z]{3}-\d{4}"
-    for entry in rss_feed.entries:
-        id_ANSSI = re.findall(id_pattern, entry.link)[0]
-        categorie= entry.link.split("/")[3]
-        dico[id_ANSSI]={"Titre": entry.title, 
-                        "Type":categorie,
-                        "Description":entry.description, 
-                        "Lien":entry.link, 
-                        "Date":entry.published}
+    dico = {}
+    # Pattern modifié : accepte 3 à 7 chiffres après ALE/AVI
+    id_pattern = r"CERTFR-\d{4}-[A-Z]{3}-\d{3,7}"
+    
+    for entry in rss_feed.entries[:2]:
+        # Vérifier si le lien existe
+        if not hasattr(entry, 'link') or not entry.link:
+            print(f"Avertissement : Entrée sans lien trouvée, ignorée")
+            continue
+        
+        # Essayer d'extraire l'identifiant
+        id_match = re.findall(id_pattern, entry.link)
+        
+        if not id_match:
+            print(f"Avertissement : Pas d'ID trouvé dans le lien : {entry.link}")
+            continue
+        
+        id_ANSSI = id_match[0]
+        
+        # Extraire la catégorie de manière sécurisée
+        link_parts = entry.link.split("/")
+        if len(link_parts) > 3:
+            categorie = link_parts[3]
+        else:
+            categorie = "inconnu"
+        
+        dico[id_ANSSI] = {
+            "Titre": entry.title if hasattr(entry, 'title') else "Sans titre", 
+            "Type": categorie,
+            "Description": entry.description if hasattr(entry, 'description') else "Pas de description", 
+            "Lien": entry.link, 
+            "Date": entry.published if hasattr(entry, 'published') else "Date inconnue"
+        }
+    
     return dico
 
-# dictionnaire = flux_RSS(url_ANSSI)
+# dictionnaire = flux_RSS(url_ANSSI_alertes)
 # for k in dictionnaire.keys():
 #     print(k)
 #     print(dictionnaire[k]["Titre"])
@@ -166,7 +195,7 @@ def API_EPSS(cve_id):
 def DataFrame():
     dico_ANSSI_avis = flux_RSS(url_ANSSI_avis)
     dico_ANSSI_alerte = flux_RSS(url_ANSSI_alertes)
-    dico_ANSSI= zip(dico_ANSSI_avis,dico_ANSSI_alerte )
+    dico_ANSSI= {**dico_ANSSI_avis, **dico_ANSSI_alerte}
 
     rows = []
     for id_ANSSI in dico_ANSSI:
@@ -194,8 +223,8 @@ def DataFrame():
     df = pd.DataFrame(rows)
     return df
 
-# df=DataFrame()
-# df.to_csv("cve_enrichies.csv", index=False, sep=";", encoding="utf-8-sig")         
+df=DataFrame()
+df.to_csv("cve_enrichies.csv", index=False, sep=";", encoding="utf-8-sig")         
             
 #dictionnaire attribuant le type de problème aux cwe qui apparaissent le plus fréquemment
 dico_cwe = {
@@ -410,7 +439,7 @@ data_test = [{
     }
 ]
 
-df_test = pd.DataFrame(data_test)
+# df_test = pd.DataFrame(data_test)
 # Risque(df_test)
 
 
