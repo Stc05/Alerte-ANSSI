@@ -9,7 +9,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
-url_ANSSI = "https://www.cert.ssi.gouv.fr/avis/feed/"
+url_ANSSI_avis = "https://www.cert.ssi.gouv.fr/avis/feed/"
+url_ANSSI_alertes = "https://www.cert.ssi.gouv.fr/alerte/feed/"
+
 
 # extraction flux RSS des avis et alertes de l'ANSSI
 def flux_RSS(url):
@@ -162,7 +164,10 @@ def API_EPSS(cve_id):
 
 
 def DataFrame():
-    dico_ANSSI = flux_RSS(url_ANSSI)
+    dico_ANSSI_avis = flux_RSS(url_ANSSI_avis)
+    dico_ANSSI_alerte = flux_RSS(url_ANSSI_alertes)
+    dico_ANSSI= zip(dico_ANSSI_avis,dico_ANSSI_alerte )
+
     rows = []
     for id_ANSSI in dico_ANSSI:
         cve_liste=CVE(dico_ANSSI[id_ANSSI]["Lien"])
