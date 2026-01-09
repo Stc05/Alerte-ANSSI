@@ -14,33 +14,29 @@ url_ANSSI_alertes = "https://www.cert.ssi.gouv.fr/alerte/feed/"
 
 
 # extraction flux RSS des avis et alertes de l'ANSSI
-# URLs des flux RSS de l'ANSSI
-url_ANSSI_avis = "https://www.cert.ssi.gouv.fr/avis/feed/"
-url_ANSSI_alertes = "https://www.cert.ssi.gouv.fr/alerte/feed/"
-
-# Extraction flux RSS des avis et alertes de l'ANSSI
 def flux_RSS(url):
     rss_feed = feedparser.parse(url)
     dico = {}
-    # Pattern modifié : accepte 3 à 7 chiffres après ALE/AVI
     id_pattern = r"CERTFR-\d{4}-[A-Z]{3}-\d{3,7}"
     
-    for entry in rss_feed.entries[:2]:
+    for entry in rss_feed.entries[:3]:
         # Vérifier si le lien existe
         if not hasattr(entry, 'link') or not entry.link:
-            print(f"Avertissement : Entrée sans lien trouvée, ignorée")
+            print(f"Pas de lien trouvée")
             continue
-        
         # Essayer d'extraire l'identifiant
-        id_match = re.findall(id_pattern, entry.link)
-        
-        if not id_match:
-            print(f"Avertissement : Pas d'ID trouvé dans le lien : {entry.link}")
+        id = re.findall(id_pattern, entry.link)
+
+        if not id:
+            print(f"Pas d'ID trouvé dans le lien ({entry.link}) du bulletin")
             continue
+        id_ANSSI = id[0]
+
+        df_csv = pd.read_csv(fichier, sep=";", encoding="utf-8-sig")
+        if id_ANSSI in df_csv["ID_ANSSI"].values:
+            print({id_ANSSI}, " déjà dans le CSV" )
+            continue   
         
-        id_ANSSI = id_match[0]
-        
-        # Extraire la catégorie de manière sécurisée
         link_parts = entry.link.split("/")
         if len(link_parts) > 3:
             categorie = link_parts[3]
@@ -54,7 +50,6 @@ def flux_RSS(url):
             "Lien": entry.link, 
             "Date": entry.published if hasattr(entry, 'published') else "Date inconnue"
         }
-    
     return dico
 
 # dictionnaire = flux_RSS(url_ANSSI_alertes)
@@ -106,12 +101,12 @@ def API_MITRE(cve_id):
     url = f"https://cveawg.mitre.org/api/cve/{cve_id}"
     response = requests.get(url)
     if response.status_code != 200:
-        return None, None, None, "Non disponible", "Non disponible", {}
+        return "", None, None,  None, None,"", "", {}
     data = response.json()
 
     # Extraire la description
     if "containers" not in data:
-        return None, None, None, "Non disponible", "Non disponible", {}
+        return "", None, None, None, None, "", "", {}
     
     descs = data.get("containers", {}).get("cna", {}).get("descriptions", [])
     description = descs[0].get("value") if descs else None
@@ -121,56 +116,100 @@ def API_MITRE(cve_id):
     #ou peut etre au lieu de cvssV3_0 c’est cvssV3_1 ou autre clé
     cvss_score = None
     try:
-        cvss_score = data["containers"]["cna"]["metrics"][0]["cvssV3_1"]["baseScore"]
+        cvss_score = data["containers"]["cna"]["metrics"][0]["cvssV3_0"]["baseScore"]
+        print("1")
     except (KeyError):
         try:
-            cvss_score = data["containers"]["cna"]["metrics"][0]["cvssV3_0"]["baseScore"]
+            cvss_score = data["containers"]["cna"]["metrics"][0]["cvssV3_1"]["baseScore"]
+            print("1")
         except(KeyError):
             try:
                 cvss_score = data["containers"]["adp"][0]["metrics"][0]["cvssV3_1"]["baseScore"]
+                print("1")
             except (KeyError):
                 try:
                     cvss_score = data["containers"]["adp"][0]["metrics"][0]["cvssV3_0"]["baseScore"]
-                except:
-                    cvss_score = None
+                    print("1")
+                except(KeyError):
+                    try:
+                        cvss_score = data["containers"]["adp"][1]["metrics"][0]["cvssV3_1"]["baseScore"]
+                        print("1")
+                    except (KeyError):
+                        cvss_score = None
+
     niveau=niveau_cvss(cvss_score)
     
     cwe = "Non disponible"
     cwe_desc="Non disponible"
-    problemtype =  data["containers"]["adp"][0].get("problemTypes", {}) or data["containers"]["cna"].get("problemTypes", {})
+    problemtype =  []
+    try:
+        problemtype =  data["containers"]["adp"][0].get("problemTypes", {})
+    except ():
+        try:
+            problemtype =  data["containers"]["adp"][1].get("problemTypes", {})
+        except():
+            try:
+                problemtype =   data["containers"]["cna"].get("problemTypes", {})
+            except(KeyError):
+                problemtype = "Non disponible"
+    # for adp_item in data.get("containers", {}).get("adp", []):
+    #     if adp_item.get("problemTypes"):
+    #         problemtype = adp_item["problemTypes"]
+    #         break
 
+    # fallback sur cna si adp vide ou inutile
+    if not problemtype:
+        cna_item = data.get("containers", {}).get("cna", {})
+        problemtype = cna_item.get("problemTypes", [])
     if problemtype and "descriptions" in problemtype[0]:
         cwe = problemtype[0]["descriptions"][0].get("cweId", "")
         cwe_desc=problemtype[0]["descriptions"][0].get("description", "")
   
     # Extraire les produits affectés
     affected = data.get("containers", {}).get("cna", {}).get("affected", [])
-    dico={}
+    produit =[]
+    vendeur=[]
+    version=[]
     for product in affected:
         product_name = product.get("product")
+        produit.append(product_name)
+        vendeur.append(product.get("vendor", ""))
+        version.extend([v.get("version","") for v in product.get("versions", []) if v.get("status") == "affected" and v.get("version")])
         if not product_name:
             continue
-        dico[product_name]={"vendor": product.get("vendor", "Vendor inconnu"),
-                            "versions" : [v.get("version") for v in product.get("versions", []) if v.get("status") == "affected" and v.get("version")]
-        }
-    return description, cvss_score, niveau, cwe, cwe_desc, dico
+    produits=list(set([str(v) for v in produit if v] )) if len(produit)>1 else produit
+    vendeurs = list(set([str(v) for v in vendeur if v] )) if len(vendeur)>1 else vendeur
+    versions = list(set([str(v) for v in version if v] )) if len(version)>1 else version
+  
+  
+    return description, cvss_score, niveau, cwe, cwe_desc, produits, vendeurs, versions
 
-# description, cvss_score, niveau, cwe, cwe_desc, dico = API_MITRE("CVE-2025-43532")
+# description, cvss_score, niveau, cwe, cwe_desc, produits, vendeurs, versions = API_MITRE("CVE-2023-35036")
 # print(f"Description : {description}\n")
 # print(f"Score CVSS : {cvss_score}\n")
 # print(f"Niveau CVSS : {niveau}\n")
 # print(f"Type CWE : {cwe}\n")
-# print(f"CWE Description : {cwe_desc}\n\n")
-# for k in dico :
-#     print(f"Éditeur : {dico[k]["vendor"]}, Produit : {k}, Versions : {', '.join(dico[k]["versions"])}")
+# print(f"CWE Description : {cwe_desc}\n")
+# print(f"produits : {", ".join(produits)}\n")
+# print(f"vendeurs : {", ".join(vendeurs)}\n")
+# print(f"versions : {", ".join(versions)}\n")
 
+# vendeur =["Non dispo"]
+# vendeur_list =vendeurs = list(set([str(v) for v in vendeur if v] )) if len(vendeur)>1 else vendeur
+# print(vendeur_list)
+# vendeurs=",".join(vendeur_list)
+# print(vendeurs)
 
-# url = f"https://cveawg.mitre.org/api/cve/CVE-2025-43532"
-# response = requests.get(url)
-# data = response.json()
+url = f"https://cveawg.mitre.org/api/cve/CVE-2023-35036"
+response = requests.get(url)
+data = response.json()
 
-# print(data["containers"]["adp"][0]["problemTypes"][0]["descriptions"][0]["cweId"])
-# print(data["containers"]["adp"][0]["problemTypes"])
+# print(data["containers"]["adp"][1]["problemTypes"][0]["descriptions"][0]["cweId"])
+# print(data["containers"]["adp"][1]["problemTypes"])
+
+#print(data["containers"]["cna"].get("problemTypes", {}))
+#print(data["containers"]["adp"][1]["problemTypes"][0]["descriptions"][0]["cweId"])
+#print(data["containers"]["adp"][1]["metrics"][0]["cvssV3_1"]["baseScore"])
 
 
 #URL de l'API EPSS pour récupérer la probabilité d'exploitation
@@ -192,39 +231,46 @@ def API_EPSS(cve_id):
 # print(f"Score EPSS :", API_EPSS("CVE-2025-14373"))
 
 
-def DataFrame():
+def DataFrame(fichier):
     dico_ANSSI_avis = flux_RSS(url_ANSSI_avis)
     dico_ANSSI_alerte = flux_RSS(url_ANSSI_alertes)
     dico_ANSSI= {**dico_ANSSI_avis, **dico_ANSSI_alerte}
 
+    df_csv = pd.read_csv(fichier, sep=";", encoding="utf-8-sig")
+
     rows = []
     for id_ANSSI in dico_ANSSI:
-        cve_liste=CVE(dico_ANSSI[id_ANSSI]["Lien"])
-        for cve_id in cve_liste :
-            score_EPSS=API_EPSS(cve_id)
-            description, cvss_score, niveau_cvss, cwe, cwe_desc, dico_produits = API_MITRE(cve_id)
-            for produit in dico_produits : 
+        # if id_ANSSI not in df_csv["ID_ANSSI"].values:
+            cve_liste=CVE(dico_ANSSI[id_ANSSI]["Lien"])
+            for cve_id in cve_liste :
+                score_EPSS=API_EPSS(cve_id)
+                description, cvss_score, niveau_cvss, cwe, cwe_desc, produits, vendeurs, versions = API_MITRE(cve_id)
                 rows.append({
-                    "ID_ANSSI": id_ANSSI,
-                    "Titre_ANSSI":dico_ANSSI[id_ANSSI]["Titre"],
-                    "Type":dico_ANSSI[id_ANSSI]["Type"],
-                    "Date":dico_ANSSI[id_ANSSI]["Date"],
-                    "CVE":cve_id,
-                    "CVSS":cvss_score,
-                    "Base_Severity":niveau_cvss,
-                    "CWE":cwe,
-                    "EPSS":score_EPSS,
-                    "Lien":dico_ANSSI[id_ANSSI]["Lien"],
-                    "Description": description.replace("\r\n", ". ").replace("\r", ". ").replace("\n", ". "),
-                    "Éditeur":dico_produits[produit]["vendor"],
-                    "Produit":produit,
-                    "Versions_Affectées": ", ".join(str(v) for v in dico_produits[produit]["versions"] if v is not None)
+                        "ID_ANSSI": id_ANSSI,
+                        "Titre_ANSSI":dico_ANSSI[id_ANSSI]["Titre"],
+                        "Type":dico_ANSSI[id_ANSSI]["Type"],
+                        "Date":dico_ANSSI[id_ANSSI]["Date"],
+                        "CVE":cve_id,
+                        "CVSS":cvss_score,
+                        "Base_Severity":niveau_cvss,
+                        "CWE":cwe,
+                        "EPSS":score_EPSS,
+                        "Lien":dico_ANSSI[id_ANSSI]["Lien"],
+                        "Description": description.replace("\r\n", ". ").replace("\r", ". ").replace("\n", ". "),
+                        "Éditeur":", ".join(vendeurs),
+                        "Produit": ", ".join(produits),
+                        "Versions_Affectées": ", ".join(versions)
                 })
-    df = pd.DataFrame(rows)
-    return df
+    df_new = pd.DataFrame(rows)
+    if len(df_new)==0:
+     df_final =pd.concat([df_csv, df_new])
+     return df_final
+    return df_new
 
-df=DataFrame()
+fichier ="cve_enrichies.csv"
+df=DataFrame(fichier)
 df.to_csv("cve_enrichies.csv", index=False, sep=";", encoding="utf-8-sig")         
+
             
 #dictionnaire attribuant le type de problème aux cwe qui apparaissent le plus fréquemment
 dico_cwe = {
