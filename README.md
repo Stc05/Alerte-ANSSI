@@ -1,7 +1,7 @@
 # Alertes ANSSI — Collecte, enrichissement et déclenchement d’alertes (CVSS/EPSS/CWE)
 
 Ce projet Python automatise :
-1) la **collecte** des avis/alertes ANSSI via le flux RSS,  
+1) la **collecte** des avis/alertes ANSSI via le flux RSS et via des données localement fournies,  
 2) l’**extraction des CVE** associées à chaque bulletin,  
 3) l’**enrichissement** des CVE (CVSS + CWE + produits/versions via l’API MITRE, EPSS via FIRST),  
 4) le **calcul d’un score de risque** par client (exposition + CVSS + EPSS + bonus CWE),  
@@ -48,6 +48,8 @@ Ce projet Python automatise :
 ### 6) Catégorisation CWE → familles
 - Dictionnaire : `dico_cwe` (ex: `CWE-416` → `Mémoire`, `CWE-22` → `Fichiers`, etc.)
 - Familles “haut risque” : `FAMILLES_HAUT_RISQUE`
+
+### -- A noter que les fonctions pour la récupération des données en locales sont assez identiques, seul la manière d'accéder aux bulletins et aux CVE change en utilisant les chemins absolu des fichiers locaux avec le fihier mère qui se nomme "data_pour_TD_final_2026".
 
 ### 7) Calcul du risque + alerte email
 - Fonction : `Risque(avis)`
